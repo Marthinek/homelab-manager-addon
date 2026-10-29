@@ -61,8 +61,8 @@ jobs:
           build-args: |
             BUILD_FROM=${{ matrix.base_image }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/homelab-manager-addon-${{ matrix.arch }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/homelab-manager-addon-${{ matrix.arch }}:latest
+            ghcr.io/marthinek/homelab-manager-addon-${{ matrix.arch }}:${{ steps.version.outputs.version }}
+            ghcr.io/marthinek/homelab-manager-addon-${{ matrix.arch }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Homelab Manager Home Assistant add-on
