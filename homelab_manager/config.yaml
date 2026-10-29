@@ -1,0 +1,22 @@
+name: "Homelab Manager"
+version: "0.1.0"
+slug: "homelab_manager"
+description: "Přehled zařízení spravovaných Homelab Managerem"
+url: "https://github.com/Marthinek/homelab-manager"
+startup: application
+boot: auto
+init: false
+arch:
+  - amd64
+  - aarch64
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:server-network
+panel_title: Homelab Manager
+options:
+  api_url: "http://192.168.0.186:18082"
+  api_key: ""
+schema:
+  api_url: str
+  api_key: password
+image: "ghcr.io/marthinek/homelab-manager-addon-{arch}"
