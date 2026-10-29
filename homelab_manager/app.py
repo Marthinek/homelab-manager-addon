@@ -105,14 +105,35 @@ def supervisor_devices():
     return devices
 
 
-def render_page(devices, error=None, notice=None):
+def render_page(devices, error=None, notice=None, system_filter="all"):
     total_updates = sum(
         int(device.get("update_count", 0)) for device in devices
     )
 
+    def device_system(device):
+        os_name = str(device.get("os", "")).lower()
+        device_id = str(device.get("id", "")).lower()
+
+        if "openwrt" in os_name:
+            return "openwrt"
+        if "proxmox" in os_name or "pve" in device_id:
+            return "proxmox"
+        if "debian" in os_name:
+            return "debian"
+        if "home assistant" in os_name or any(
+            name in device_id for name in ("homeassistant", "home-assistant")
+        ):
+            return "homeassistant"
+        return "other"
+
+    filtered_devices = [
+        device for device in devices
+        if system_filter == "all" or device_system(device) == system_filter
+    ]
+
     rows = []
 
-    for device in devices:
+    for device in filtered_devices:
         device_id = html.escape(str(device.get("id", "unknown")))
         os_name = html.escape(str(device.get("os", "Neznámý OS")))
         checked = html.escape(str(device.get("checked", "Neznámý")))
@@ -235,9 +256,20 @@ li {{ margin-bottom: 8px; }}
     <span class="number">{total_updates}</span>
   </div>
 </div>
+<form method="get" action="/" style="margin-bottom: 12px;">
+  <label for="system">Filtrovat podle systému: </label>
+  <select id="system" name="system" onchange="this.form.submit()">
+    <option value="all" {"selected" if system_filter == "all" else ""}>Všechna zařízení</option>
+    <option value="debian" {"selected" if system_filter == "debian" else ""}>Debian</option>
+    <option value="proxmox" {"selected" if system_filter == "proxmox" else ""}>Proxmox VE</option>
+    <option value="openwrt" {"selected" if system_filter == "openwrt" else ""}>OpenWrt</option>
+    <option value="homeassistant" {"selected" if system_filter == "homeassistant" else ""}>Home Assistant</option>
+  </select>
+</form>
 <form method="post" action="/check">
   <button type="submit">Zkontrolovat aktualizace</button>
 </form>
+<p class="muted">Zobrazeno zařízení: {len(filtered_devices)} z {len(devices)}.</p>
 <div class="table-wrap">
 <table>
 <thead>
@@ -272,15 +304,23 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path not in ("/", "/index.html"):
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        if parsed.path not in ("/", "/index.html"):
             self.send_error(404)
             return
+
+        system_filter = parse_qs(parsed.query).get("system", ["all"])[0]
+        allowed_filters = {"all", "debian", "proxmox", "openwrt", "homeassistant"}
+        if system_filter not in allowed_filters:
+            system_filter = "all"
 
         try:
             data = api_request("/api/updates", timeout=15)
             devices = data.get("devices", [])
             devices.extend(supervisor_devices())
-            page = render_page(devices)
+            page = render_page(devices, system_filter=system_filter)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             logger.warning("Could not load updates: %s", type(exc).__name__)
             page = render_page(
