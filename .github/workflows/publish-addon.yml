@@ -34,7 +34,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION="$(grep '^version:' homelab_manager/config.yaml | sed 's/^version:[[:space:]]*["'\''"]*//; s/["'\''"][[:space:]]*$//')"
+          VERSION="$(sed -n 's/^version: *"?\([^" ]*\)"\?$/\1/p' homelab_manager/config.yaml | head -n1)"
           test -n "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
