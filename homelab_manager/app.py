@@ -1,83 +1,254 @@
+
 import html
 import json
+import logging
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 API_URL = os.environ["HOMELAB_API_URL"].rstrip("/")
 API_KEY = os.environ["HOMELAB_API_KEY"]
 
+logger = logging.getLogger("homelab-manager-addon")
+
+
+def api_request(path, method="GET", timeout=330):
+    request = Request(
+        API_URL + path,
+        headers={
+            "X-API-Key": API_KEY,
+            "Accept": "application/json",
+        },
+        method=method,
+    )
+
+    with urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def render_page(devices, error=None, notice=None):
+    total_updates = sum(
+        int(device.get("update_count", 0)) for device in devices
+    )
+
+    rows = []
+
+    for device in devices:
+        device_id = html.escape(str(device.get("id", "unknown")))
+        os_name = html.escape(str(device.get("os", "Neznámý OS")))
+        checked = html.escape(str(device.get("checked", "Neznámý")))
+        count = int(device.get("update_count", 0))
+        packages = device.get("packages", [])
+
+        status = (
+            f"<strong class='updates'>{count}</strong>"
+            if count
+            else "<strong class='ok'>0</strong>"
+        )
+
+        if packages:
+            package_html = "<ul>" + "".join(
+                f"<li><code>{html.escape(str(package))}</code></li>"
+                for package in packages
+            ) + "</ul>"
+        else:
+            package_html = "<span class='muted'>Žádné dostupné aktualizace</span>"
+
+        rows.append(
+            "<tr>"
+            f"<td><strong>{device_id}</strong></td>"
+            f"<td>{os_name}</td>"
+            f"<td>{status}</td>"
+            f"<td>{checked}</td>"
+            f"<td>{package_html}</td>"
+            "</tr>"
+        )
+
+    error_html = (
+        f"<div class='error'>{html.escape(error)}</div>" if error else ""
+    )
+    notice_html = (
+        f"<div class='notice'>{html.escape(notice)}</div>" if notice else ""
+    )
+
+    page = f"""<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homelab Manager</title>
+<style>
+:root {{
+  color-scheme: light dark;
+  --border: #8885;
+  --panel: #8881;
+  --green: #2e9d58;
+  --red: #d64545;
+  --blue: #287ac2;
+}}
+body {{
+  font-family: Arial, sans-serif;
+  margin: 20px;
+  color: var(--primary-text-color, inherit);
+  background: var(--primary-background-color, transparent);
+}}
+h1 {{ margin-bottom: 8px; }}
+.summary {{
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 20px 0;
+}}
+.card {{
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  min-width: 110px;
+}}
+.number {{ display: block; font-size: 1.7em; font-weight: bold; }}
+button {{
+  background: var(--blue);
+  color: white;
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 18px;
+  font-size: 1em;
+  cursor: pointer;
+}}
+table {{ border-collapse: collapse; width: 100%; margin-top: 18px; }}
+th, td {{
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}}
+th {{ background: var(--panel); }}
+.updates {{ color: var(--red); }}
+.ok {{ color: var(--green); }}
+.error, .notice {{
+  padding: 12px;
+  margin: 14px 0;
+  border-radius: 8px;
+}}
+.error {{ color: var(--red); border: 1px solid var(--red); }}
+.notice {{ border: 1px solid var(--green); }}
+code {{ overflow-wrap: anywhere; white-space: normal; }}
+ul {{ padding-left: 20px; margin: 0; }}
+li {{ margin-bottom: 8px; }}
+.muted, small {{ opacity: .7; }}
+.table-wrap {{ overflow-x: auto; }}
+</style>
+</head>
+<body>
+<h1>Homelab Manager</h1>
+<p class="muted">Přehled zařízení a dostupných aktualizací operačních systémů.</p>
+{error_html}
+{notice_html}
+<div class="summary">
+  <div class="card">
+    <span class="muted">Zařízení</span>
+    <span class="number">{len(devices)}</span>
+  </div>
+  <div class="card">
+    <span class="muted">Dostupné aktualizace</span>
+    <span class="number">{total_updates}</span>
+  </div>
+</div>
+<form method="post" action="/check">
+  <button type="submit">Zkontrolovat aktualizace</button>
+</form>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+  <th>Zařízení</th>
+  <th>Operační systém</th>
+  <th>Aktualizace</th>
+  <th>Poslední kontrola</th>
+  <th>Dostupné balíčky</th>
+</tr>
+</thead>
+<tbody>
+{''.join(rows) or '<tr><td colspan="5">Zatím nejsou k dispozici žádné výsledky.</td></tr>'}
+</tbody>
+</table>
+</div>
+<p><small>Kontrola pouze zjišťuje dostupné aktualizace. Balíčky neinstaluje a zařízení nerestartuje.</small></p>
+</body>
+</html>"""
+
+    return page
+
 
 class Handler(BaseHTTPRequestHandler):
+    def send_html(self, page, status=200):
+        body = page.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         if self.path not in ("/", "/index.html"):
             self.send_error(404)
             return
 
-        devices = []
-        error = None
         try:
-            request = Request(
-                API_URL + "/api/devices",
-                headers={"X-API-Key": API_KEY},
-            )
-            with urlopen(request, timeout=10) as response:
-                data = json.loads(response.read().decode("utf-8"))
-                devices = data.get("devices", [])
+            data = api_request("/api/updates", timeout=15)
+            devices = data.get("devices", [])
+            page = render_page(devices)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
-            error = f"API není dostupné nebo požadavek selhal: {type(exc).__name__}"
-
-        rows = ""
-        for device in devices:
-            rows += (
-                "<tr>"
-                f"<td>{html.escape(str(device.get('id', '')))}</td>"
-                f"<td>{html.escape(str(device.get('role', 'unknown')))}</td>"
-                f"<td>{html.escape(str(device.get('os_family', 'unknown')))}</td>"
-                f"<td>{html.escape(str(device.get('update_policy', 'manual_approval')))}</td>"
-                "</tr>"
+            logger.warning("Could not load updates: %s", type(exc).__name__)
+            page = render_page(
+                [],
+                error="Nepodařilo se načíst data z API. Zkontroluj API a konfiguraci doplňku.",
             )
 
-        message = (
-            f"<p class='error'>{html.escape(error)}</p>"
-            if error else f"<p>Počet zařízení: {len(devices)}</p>"
-        )
-        page = f"""<!doctype html>
-<html lang="cs">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60">
-<title>Homelab Manager</title>
-<style>
-body{{font-family:Arial,sans-serif;margin:24px;color:var(--primary-text-color,#222);
-background:var(--primary-background-color,#fff)}}
-table{{border-collapse:collapse;width:100%;margin-top:16px}}
-th,td{{padding:10px;text-align:left;border-bottom:1px solid #8885}}
-.error{{color:#c62828}}
-small{{opacity:.75}}
-</style>
-</head>
-<body>
-<h1>Homelab Manager</h1>
-{message}
-<table>
-<thead><tr><th>Zařízení</th><th>Role</th><th>OS</th><th>Politika aktualizací</th></tr></thead>
-<tbody>{rows or '<tr><td colspan="4">Zatím žádná zařízení nebo se nepodařilo načíst data.</td></tr>'}</tbody>
-</table>
-<p><small>Aktualizace přehledu každých 60 sekund. Tento doplněk zatím pouze čte inventář.</small></p>
-</body>
-</html>"""
-        body = page.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self.send_html(page)
+
+    def do_POST(self):
+        if self.path != "/check":
+            self.send_error(404)
+            return
+
+        try:
+            data = api_request(
+                "/api/updates/check",
+                method="POST",
+                timeout=330,
+            )
+            devices = data.get("devices", [])
+            notice = (
+                "Kontrola dokončena. "
+                f"Zařízení: {data.get('count', len(devices))}, "
+                f"dostupné aktualizace: {data.get('total_updates', 0)}."
+            )
+            page = render_page(devices, notice=notice)
+        except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+            logger.warning("Update check failed: %s", type(exc).__name__)
+            try:
+                data = api_request("/api/updates", timeout=15)
+                devices = data.get("devices", [])
+            except (HTTPError, URLError, TimeoutError, ValueError, OSError):
+                devices = []
+
+            page = render_page(
+                devices,
+                error="Kontrola aktualizací selhala. Zkontroluj logy API a doplňku.",
+            )
+
+        self.send_html(page)
 
     def log_message(self, fmt, *args):
-        print("Homelab Manager UI:", fmt % args)
+        logger.info("%s", fmt % args)
 
 
-HTTPServer(("0.0.0.0", 8099), Handler).serve_forever()
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    server = ThreadingHTTPServer(("0.0.0.0", 8099), Handler)
+    logger.info("Homelab Manager add-on listening on port 8099")
+    server.serve_forever()
