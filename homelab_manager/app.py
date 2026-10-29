@@ -256,7 +256,7 @@ li {{ margin-bottom: 8px; }}
     <span class="number">{total_updates}</span>
   </div>
 </div>
-<form method="get" action="/" style="margin-bottom: 12px;">
+<form method="get" action="" style="margin-bottom: 12px;">
   <label for="system">Filtrovat podle systému: </label>
   <select id="system" name="system" onchange="this.form.submit()">
     <option value="all" {"selected" if system_filter == "all" else ""}>Všechna zařízení</option>
@@ -266,7 +266,7 @@ li {{ margin-bottom: 8px; }}
     <option value="homeassistant" {"selected" if system_filter == "homeassistant" else ""}>Home Assistant</option>
   </select>
 </form>
-<form method="post" action="/check">
+<form method="post" action="">
   <button type="submit">Zkontrolovat aktualizace</button>
 </form>
 <p class="muted">Zobrazeno zařízení: {len(filtered_devices)} z {len(devices)}.</p>
@@ -331,9 +331,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_html(page)
 
     def do_POST(self):
-        if self.path != "/check":
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        if parsed.path not in ("/", "/check"):
             self.send_error(404)
             return
+        system_filter = parse_qs(parsed.query).get("system", ["all"])[0]
+        allowed_filters = {"all", "debian", "proxmox", "openwrt", "homeassistant"}
+        if system_filter not in allowed_filters:
+            system_filter = "all"
 
         try:
             data = api_request(
@@ -349,7 +356,7 @@ class Handler(BaseHTTPRequestHandler):
                 f"Zobrazené položky: {len(devices)}, "
                 f"dostupné aktualizace: {total_updates}."
             )
-            page = render_page(devices, notice=notice)
+            page = render_page(devices, notice=notice, system_filter=system_filter)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             logger.warning("Update check failed: %s", type(exc).__name__)
             try:
@@ -362,6 +369,7 @@ class Handler(BaseHTTPRequestHandler):
             page = render_page(
                 devices,
                 error="Kontrola aktualizací selhala. Zkontroluj logy API a doplňku.",
+                system_filter=system_filter,
             )
 
         self.send_html(page)
