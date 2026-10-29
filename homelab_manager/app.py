@@ -3,6 +3,7 @@ import html
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -27,6 +28,83 @@ def api_request(path, method="GET", timeout=330):
         return json.loads(response.read().decode("utf-8"))
 
 
+SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
+
+HA_COMPONENTS = (
+    ("home-assistant-os", "Home Assistant OS", "os/info"),
+    ("home-assistant-core", "Home Assistant Core", "core/info"),
+    ("home-assistant-supervisor", "Home Assistant Supervisor", "supervisor/info"),
+)
+
+
+def supervisor_devices():
+    checked = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    devices = []
+
+    for device_id, label, endpoint in HA_COMPONENTS:
+        if not SUPERVISOR_TOKEN:
+            message = "Chybí SUPERVISOR_TOKEN; ověř oprávnění Supervisor API v konfiguraci doplňku."
+            devices.append({
+                "id": device_id,
+                "os": label,
+                "checked": checked,
+                "update_count": 0,
+                "packages": [message],
+                "error": True,
+            })
+            continue
+
+        try:
+            request = Request(
+                "http://supervisor/" + endpoint,
+                headers={
+                    "Authorization": "Bearer " + SUPERVISOR_TOKEN,
+                    "Accept": "application/json",
+                },
+                method="GET",
+            )
+            with urlopen(request, timeout=10) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+
+            if isinstance(payload, dict) and payload.get("result") == "error":
+                raise ValueError("Supervisor API returned an error")
+
+            info = payload.get("data", payload) if isinstance(payload, dict) else {}
+            if not isinstance(info, dict):
+                raise ValueError("Unexpected Supervisor API response")
+
+            version = str(info.get("version") or "neznámá")
+            latest = str(info.get("version_latest") or "neznámá")
+            update_available = bool(info.get("update_available", False))
+            packages = (
+                [f"Aktualizace dostupná: {version} → {latest}"]
+                if update_available
+                else []
+            )
+
+            devices.append({
+                "id": device_id,
+                "os": f"{label} {version}",
+                "version": version,
+                "version_latest": latest,
+                "checked": checked,
+                "update_count": 1 if update_available else 0,
+                "packages": packages,
+            })
+        except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+            message = f"Nepodařilo se načíst informace ({type(exc).__name__})."
+            devices.append({
+                "id": device_id,
+                "os": label,
+                "checked": checked,
+                "update_count": 0,
+                "packages": [message],
+                "error": True,
+            })
+
+    return devices
+
+
 def render_page(devices, error=None, notice=None):
     total_updates = sum(
         int(device.get("update_count", 0)) for device in devices
@@ -41,11 +119,12 @@ def render_page(devices, error=None, notice=None):
         count = int(device.get("update_count", 0))
         packages = device.get("packages", [])
 
-        status = (
-            f"<strong class='updates'>{count}</strong>"
-            if count
-            else "<strong class='ok'>0</strong>"
-        )
+        if device.get("error"):
+            status = "<strong class='updates'>Chyba</strong>"
+        elif count:
+            status = f"<strong class='updates'>{count}</strong>"
+        else:
+            status = "<strong class='ok'>0</strong>"
 
         if packages:
             package_html = "<ul>" + "".join(
@@ -200,6 +279,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = api_request("/api/updates", timeout=15)
             devices = data.get("devices", [])
+            devices.extend(supervisor_devices())
             page = render_page(devices)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             logger.warning("Could not load updates: %s", type(exc).__name__)
@@ -222,10 +302,12 @@ class Handler(BaseHTTPRequestHandler):
                 timeout=330,
             )
             devices = data.get("devices", [])
+            devices.extend(supervisor_devices())
+            total_updates = sum(int(device.get("update_count", 0)) for device in devices)
             notice = (
                 "Kontrola dokončena. "
-                f"Zařízení: {data.get('count', len(devices))}, "
-                f"dostupné aktualizace: {data.get('total_updates', 0)}."
+                f"Zobrazené položky: {len(devices)}, "
+                f"dostupné aktualizace: {total_updates}."
             )
             page = render_page(devices, notice=notice)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
@@ -233,6 +315,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 data = api_request("/api/updates", timeout=15)
                 devices = data.get("devices", [])
+                devices.extend(supervisor_devices())
             except (HTTPError, URLError, TimeoutError, ValueError, OSError):
                 devices = []
 
