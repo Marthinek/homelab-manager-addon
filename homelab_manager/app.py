@@ -518,7 +518,7 @@ class Handler(BaseHTTPRequestHandler):
                 notice = "Aktualizace dokončena pro: " + ", ".join(result.get("hosts", hosts))
                 page = render_page(devices, notice=notice, system_filter=system_filter)
             except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
-                logger.warning("Selected package update failed: %s", type(exc).__name__)
+                logger.exception("Selected package update failed")
                 message = "Aktualizaci se nepodařilo dokončit. Ověř povolení zařízení a logy API."
                 if isinstance(exc, HTTPError):
                     try:
