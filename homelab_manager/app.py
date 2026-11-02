@@ -393,20 +393,20 @@ li {{ margin-bottom: 8px; }}
   </form>
 </dialog>
 <script>
-function confirmUpdateSelection() {
+function confirmUpdateSelection() {{
   const selected = document.querySelectorAll('#update-dialog input[name="hosts"]:checked');
-  if (!selected.length) {
+  if (!selected.length) {{
     alert('Vyber alespoň jedno podporované zařízení.');
     return false;
-  }
+  }}
   const names = Array.from(selected).map(el => el.value);
   return confirm('Opravdu nainstalovat dostupné aktualizace na ' + names.length + ' zařízení?\\n\\n' + names.join(', ') + '\\n\\nZařízení se automaticky nerestartují.');
-}
-function refreshSelectedSummary() {
+}}
+function refreshSelectedSummary() {{
   const selected = document.querySelectorAll('#update-dialog input[name="hosts"]:checked').length;
   const summary = document.getElementById('selected-summary');
   if (summary) summary.textContent = 'Vybraná zařízení: ' + selected;
-}
+}}
 document.querySelectorAll('#update-dialog input[name="hosts"]').forEach(el => el.addEventListener('change', refreshSelectedSummary));
 refreshSelectedSummary();
 </script>
