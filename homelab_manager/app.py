@@ -14,13 +14,18 @@ API_KEY = os.environ["HOMELAB_API_KEY"]
 logger = logging.getLogger("homelab-manager-addon")
 
 
-def api_request(path, method="GET", timeout=330):
+def api_request(path, method="GET", timeout=330, payload=None):
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {
+        "X-API-Key": API_KEY,
+        "Accept": "application/json",
+    }
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
     request = Request(
         API_URL + path,
-        headers={
-            "X-API-Key": API_KEY,
-            "Accept": "application/json",
-        },
+        data=body,
+        headers=headers,
         method=method,
     )
 
@@ -170,6 +175,31 @@ def render_page(devices, error=None, notice=None, system_filter="all"):
             "</tr>"
         )
 
+    update_choices = []
+    for device in filtered_devices:
+        device_id_raw = str(device.get("id", ""))
+        count = int(device.get("update_count", 0))
+        if device.get("can_update"):
+            update_choices.append(
+                "<label class='update-choice'>"
+                f"<input type='checkbox' name='hosts' value='{html.escape(device_id_raw, quote=True)}' "
+                f"{'checked' if count > 0 else ''}> "
+                f"<span><strong>{html.escape(device_id_raw)}</strong>"
+                f"<small>{count} dostupných aktualizací</small></span>"
+                "</label>"
+            )
+        else:
+            reason = html.escape(str(device.get("update_reason", "Tento typ není podporován.")))
+            update_choices.append(
+                "<label class='update-choice disabled'>"
+                f"<input type='checkbox' disabled> "
+                f"<span><strong>{html.escape(device_id_raw)}</strong>"
+                f"<small>{count} aktualizací · {reason}</small></span>"
+                "</label>"
+            )
+
+    update_modal = "".join(update_choices) or "<p>Pro tento filtr nejsou dostupná žádná zařízení.</p>"
+
     error_html = (
         f"<div class='error'>{html.escape(error)}</div>" if error else ""
     )
@@ -286,6 +316,15 @@ th {{ background: var(--panel); }}
 .error {{ color: var(--red); border: 1px solid var(--red); }}
 .notice {{ border: 1px solid var(--green); }}
 code {{ overflow-wrap: anywhere; white-space: normal; }}
+dialog {{ width: min(620px, calc(100% - 32px)); max-height: 85vh; overflow: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--card-background-color, var(--primary-background-color, #222)); color: var(--primary-text-color, inherit); padding: 20px; }}
+dialog::backdrop {{ background: #0009; }}
+.update-choice {{ display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }}
+.update-choice input {{ margin-top: 4px; }}
+.update-choice span {{ display: flex; flex-direction: column; gap: 4px; }}
+.update-choice small {{ opacity: .7; }}
+.update-choice.disabled {{ opacity: .6; }}
+.modal-actions {{ display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 18px; }}
+button.secondary {{ background: #777; }}
 ul {{ padding-left: 20px; margin: 0; }}
 li {{ margin-bottom: 8px; }}
 .muted, small {{ opacity: .7; }}
@@ -334,12 +373,43 @@ li {{ margin-bottom: 8px; }}
   </select>
 </form>
   </div>
-  <div>
+  <div style="display:flex; gap:8px; flex-wrap:wrap;">
     <form method="post" action="">
       <button type="submit">Zkontrolovat aktualizace</button>
     </form>
+    <button type="button" onclick="document.getElementById('update-dialog').showModal()">Aktualizovat vybraná zařízení</button>
   </div>
 </div>
+<dialog id="update-dialog">
+  <h2>Aktualizovat zařízení</h2>
+  <p>Výběr vychází z aktuálního filtru dashboardu. Zařízení s vypnutou aktualizační politikou nebo nepodporovaným systémem nelze vybrat.</p>
+  <form method="post" action="install?system={html.escape(system_filter, quote=True)}" onsubmit="return confirmUpdateSelection()">
+    <div class="update-list">{update_modal}</div>
+    <p id="selected-summary" class="muted"></p>
+    <div class="modal-actions">
+      <button type="button" class="secondary" onclick="document.getElementById('update-dialog').close()">Zrušit</button>
+      <button type="submit">Potvrdit instalaci</button>
+    </div>
+  </form>
+</dialog>
+<script>
+function confirmUpdateSelection() {
+  const selected = document.querySelectorAll('#update-dialog input[name="hosts"]:checked');
+  if (!selected.length) {
+    alert('Vyber alespoň jedno podporované zařízení.');
+    return false;
+  }
+  const names = Array.from(selected).map(el => el.value);
+  return confirm('Opravdu nainstalovat dostupné aktualizace na ' + names.length + ' zařízení?\\n\\n' + names.join(', ') + '\\n\\nZařízení se automaticky nerestartují.');
+}
+function refreshSelectedSummary() {
+  const selected = document.querySelectorAll('#update-dialog input[name="hosts"]:checked').length;
+  const summary = document.getElementById('selected-summary');
+  if (summary) summary.textContent = 'Vybraná zařízení: ' + selected;
+}
+document.querySelectorAll('#update-dialog input[name="hosts"]').forEach(el => el.addEventListener('change', refreshSelectedSummary));
+refreshSelectedSummary();
+</script>
 <p class="muted">Zobrazeno {len(filtered_devices)} z {len(devices)} zařízení. Souhrnné statistiky výše zahrnují všechna zařízení.</p>
 <div class="table-wrap">
 <table>
@@ -388,7 +458,7 @@ class Handler(BaseHTTPRequestHandler):
             system_filter = "all"
 
         try:
-            data = api_request("/api/updates", timeout=15)
+            data = api_request("/api/update-targets", timeout=15)
             devices = data.get("devices", [])
             devices.extend(supervisor_devices())
             page = render_page(devices, system_filter=system_filter)
@@ -405,6 +475,50 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(self.path)
+        if parsed.path == "/install":
+            system_filter = parse_qs(parsed.query).get("system", ["all"])[0]
+            allowed_filters = {"all", "debian", "proxmox", "openwrt", "homeassistant"}
+            if system_filter not in allowed_filters:
+                system_filter = "all"
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 20000:
+                    raise ValueError("Invalid form size")
+                form = parse_qs(self.rfile.read(length).decode("utf-8"))
+                hosts = form.get("hosts", [])
+                if not hosts:
+                    raise ValueError("Vyber alespoň jedno podporované zařízení.")
+                result = api_request(
+                    "/api/updates/install",
+                    method="POST",
+                    timeout=1800,
+                    payload={"hosts": hosts},
+                )
+                data = api_request("/api/update-targets", timeout=15)
+                devices = data.get("devices", [])
+                devices.extend(supervisor_devices())
+                notice = "Aktualizace dokončena pro: " + ", ".join(result.get("hosts", hosts))
+                page = render_page(devices, notice=notice, system_filter=system_filter)
+            except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+                logger.warning("Selected package update failed: %s", type(exc).__name__)
+                message = "Aktualizaci se nepodařilo dokončit. Ověř povolení zařízení a logy API."
+                if isinstance(exc, HTTPError):
+                    try:
+                        detail = json.loads(exc.read().decode("utf-8")).get("detail")
+                        if detail:
+                            message = str(detail)
+                    except (ValueError, OSError):
+                        pass
+                try:
+                    data = api_request("/api/update-targets", timeout=15)
+                    devices = data.get("devices", [])
+                    devices.extend(supervisor_devices())
+                except (HTTPError, URLError, TimeoutError, ValueError, OSError):
+                    devices = []
+                page = render_page(devices, error=message, system_filter=system_filter)
+            self.send_html(page)
+            return
+
         if parsed.path not in ("/", "/check"):
             self.send_error(404)
             return
@@ -419,7 +533,8 @@ class Handler(BaseHTTPRequestHandler):
                 method="POST",
                 timeout=330,
             )
-            devices = data.get("devices", [])
+            target_data = api_request("/api/update-targets", timeout=15)
+            devices = target_data.get("devices", [])
             devices.extend(supervisor_devices())
             total_updates = sum(int(device.get("update_count", 0)) for device in devices)
             notice = (
@@ -431,7 +546,7 @@ class Handler(BaseHTTPRequestHandler):
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             logger.warning("Update check failed: %s", type(exc).__name__)
             try:
-                data = api_request("/api/updates", timeout=15)
+                data = api_request("/api/update-targets", timeout=15)
                 devices = data.get("devices", [])
                 devices.extend(supervisor_devices())
             except (HTTPError, URLError, TimeoutError, ValueError, OSError):
