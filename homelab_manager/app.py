@@ -346,7 +346,7 @@ li {{ margin-bottom: 8px; }}
 </style>
 </head>
 <body>
-<a class="back-link" href="/hassio/addon/homelab_manager/info" target="_top" title="Zpět na stránku doplňku Homelab Manager"><span aria-hidden="true">←</span> Zpět na doplněk Homelab Manager</a>
+<a class="back-link" href="/" target="_top" title="Zpět do Home Assistant"><span aria-hidden="true">←</span> Zpět do Home Assistant</a>
 <header>
 <h1>Homelab Manager</h1>
 <p class="muted">Centrální přehled zařízení a dostupných aktualizací.</p>
