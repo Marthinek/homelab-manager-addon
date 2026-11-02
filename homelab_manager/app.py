@@ -458,10 +458,28 @@ class Handler(BaseHTTPRequestHandler):
             system_filter = "all"
 
         try:
-            data = api_request("/api/update-targets", timeout=15)
+            compatibility_notice = None
+            try:
+                data = api_request("/api/update-targets", timeout=15)
+            except HTTPError as api_exc:
+                # Older controller API versions expose /api/updates but not
+                # /api/update-targets. Keep the dashboard useful while the
+                # controller service is being updated.
+                if api_exc.code != 404:
+                    raise
+                data = api_request("/api/updates", timeout=15)
+                compatibility_notice = (
+                    "API řadiče zatím nepodporuje /api/update-targets. "
+                    "Zobrazuji dostupné výsledky z /api/updates; "
+                    "pro správu vybraných aktualizací aktualizuj API na řadiči."
+                )
             devices = data.get("devices", [])
             devices.extend(supervisor_devices())
-            page = render_page(devices, system_filter=system_filter)
+            page = render_page(
+                devices,
+                error=compatibility_notice,
+                system_filter=system_filter,
+            )
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             logger.warning("Could not load updates: %s", type(exc).__name__)
             page = render_page(
