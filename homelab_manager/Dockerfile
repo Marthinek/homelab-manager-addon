@@ -5,6 +5,7 @@ RUN apk add --no-cache python3
 
 COPY run.sh /
 COPY app.py /
-RUN chmod a+x /run.sh
+RUN python3 -m py_compile /app.py \
+    && chmod a+x /run.sh
 
 CMD ["/run.sh"]
