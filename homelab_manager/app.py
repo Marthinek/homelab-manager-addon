@@ -109,6 +109,11 @@ def render_page(devices, error=None, notice=None, system_filter="all"):
     total_updates = sum(
         int(device.get("update_count", 0)) for device in devices
     )
+    devices_with_updates = sum(
+        1 for device in devices
+        if int(device.get("update_count", 0)) > 0 and not device.get("error")
+    )
+    device_errors = sum(1 for device in devices if device.get("error"))
 
     def device_system(device):
         os_name = str(device.get("os", "")).lower()
@@ -141,11 +146,11 @@ def render_page(devices, error=None, notice=None, system_filter="all"):
         packages = device.get("packages", [])
 
         if device.get("error"):
-            status = "<strong class='updates'>Chyba</strong>"
+            status = "<span class='status-pill status-error'>Chyba</span>"
         elif count:
-            status = f"<strong class='updates'>{count}</strong>"
+            status = f"<span class='status-pill status-updates'>{count} aktualizací</span>"
         else:
-            status = "<strong class='ok'>0</strong>"
+            status = "<span class='status-pill status-ok'>Aktuální</span>"
 
         if packages:
             package_html = "<ul>" + "".join(
@@ -194,20 +199,66 @@ body {{
   background: var(--primary-background-color, transparent);
 }}
 h1 {{ margin-bottom: 8px; }}
-.summary {{
-  display: flex;
+ .summary {{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  flex-wrap: wrap;
   margin: 20px 0;
 }}
 .card {{
-  padding: 14px 18px;
+  padding: 16px 18px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  min-width: 110px;
+  border-radius: 12px;
+  background: var(--card-background-color, var(--panel));
+  min-width: 0;
+  box-shadow: 0 2px 8px #0000000a;
 }}
-.number {{ display: block; font-size: 1.7em; font-weight: bold; }}
+.card-label {{ display: block; font-size: .88em; opacity: .75; margin-bottom: 8px; }}
+.number {{ display: block; font-size: 1.9em; font-weight: 700; line-height: 1.1; }}
+.card-detail {{ display: block; margin-top: 7px; font-size: .8em; opacity: .65; }}
+.status-pill {{
+  display: inline-block;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: .82em;
+  font-weight: 700;
+  white-space: nowrap;
+}}
+.status-updates {{ color: var(--error-color, #d64545); background: #d6454518; }}
+.status-ok {{ color: var(--success-color, #2e9d58); background: #2e9d5818; }}
+.status-error {{ color: var(--error-color, #d64545); background: #d6454520; }}
+.toolbar {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 20px 0 10px;
+}}
+select {{
+  color: var(--primary-text-color, inherit);
+  background: var(--card-background-color, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 1em;
+}}
+table {{ border-collapse: collapse; width: 100%; margin-top: 12px; }}
+th, td {{
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}}
+th {{ background: var(--panel); font-size: .86em; opacity: .8; }}
+tbody tr:hover {{ background: var(--panel); }}
+@media (max-width: 700px) {{
+  body {{ margin: 12px; }}
+  .summary {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
+  .card {{ padding: 12px; }}
+  .number {{ font-size: 1.55em; }}
+  th, td {{ padding: 9px; }}
+}}
 button {{
   background: var(--blue);
   color: white;
@@ -242,22 +293,38 @@ li {{ margin-bottom: 8px; }}
 </style>
 </head>
 <body>
+<header>
 <h1>Homelab Manager</h1>
-<p class="muted">Přehled zařízení a dostupných aktualizací operačních systémů.</p>
+<p class="muted">Centrální přehled zařízení a dostupných aktualizací.</p>
+</header>
 {error_html}
 {notice_html}
 <div class="summary">
   <div class="card">
-    <span class="muted">Zařízení</span>
+    <span class="card-label">Spravovaná zařízení</span>
     <span class="number">{len(devices)}</span>
+    <span class="card-detail">Celkem v inventáři</span>
   </div>
   <div class="card">
-    <span class="muted">Dostupné aktualizace</span>
+    <span class="card-label">Dostupné aktualizace</span>
     <span class="number">{total_updates}</span>
+    <span class="card-detail">Napříč všemi systémy</span>
+  </div>
+  <div class="card">
+    <span class="card-label">Vyžadují pozornost</span>
+    <span class="number">{devices_with_updates}</span>
+    <span class="card-detail">Zařízení s aktualizacemi</span>
+  </div>
+  <div class="card">
+    <span class="card-label">Chyby kontroly</span>
+    <span class="number">{device_errors}</span>
+    <span class="card-detail">Zařízení s chybou načtení</span>
   </div>
 </div>
-<form method="get" action="" style="margin-bottom: 12px;">
-  <label for="system">Filtrovat podle systému: </label>
+<div class="toolbar">
+  <div>
+    <label for="system">Zobrazit systém: </label>
+    <form method="get" action="" style="display:inline-block; margin-left: 6px;">
   <select id="system" name="system" onchange="this.form.submit()">
     <option value="all" {"selected" if system_filter == "all" else ""}>Všechna zařízení</option>
     <option value="debian" {"selected" if system_filter == "debian" else ""}>Debian</option>
@@ -266,10 +333,14 @@ li {{ margin-bottom: 8px; }}
     <option value="homeassistant" {"selected" if system_filter == "homeassistant" else ""}>Home Assistant</option>
   </select>
 </form>
-<form method="post" action="">
-  <button type="submit">Zkontrolovat aktualizace</button>
-</form>
-<p class="muted">Zobrazeno zařízení: {len(filtered_devices)} z {len(devices)}.</p>
+  </div>
+  <div>
+    <form method="post" action="">
+      <button type="submit">Zkontrolovat aktualizace</button>
+    </form>
+  </div>
+</div>
+<p class="muted">Zobrazeno {len(filtered_devices)} z {len(devices)} zařízení. Souhrnné statistiky výše zahrnují všechna zařízení.</p>
 <div class="table-wrap">
 <table>
 <thead>
