@@ -3,6 +3,7 @@ import html
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
@@ -449,7 +450,55 @@ refreshSelectedSummary();
     return page
 
 
+def render_install_page(job_id, hosts, system_filter="all"):
+    job_id_json = json.dumps(job_id)
+    host_list = "".join(f"<li><code>{html.escape(str(host))}</code></li>" for host in hosts)
+    safe_filter = html.escape(system_filter, quote=True)
+    page = """<!doctype html>
+<html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Aktualizace zařízení · Homelab Manager</title>
+<style>
+:root { color-scheme: light dark; --border:#8885; --panel:#8881; --blue:#287ac2; --green:#2e9d58; --red:#d64545; }
+body { font-family:Arial,sans-serif; margin:20px; color:var(--primary-text-color,inherit); background:var(--primary-background-color,transparent); }
+main { max-width:1100px; margin:0 auto; } header,.toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.card { border:1px solid var(--border); border-radius:12px; padding:16px; background:var(--card-background-color,var(--panel)); margin:16px 0; }
+#job-status { font-weight:700; } #job-status.running,#job-status.queued { color:var(--blue); } #job-status.completed { color:var(--green); } #job-status.failed { color:var(--red); }
+#terminal { background:#101820; color:#d1d5db; border-radius:10px; padding:16px; min-height:300px; max-height:65vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
+button,.button { display:inline-block; background:var(--blue); color:white; border:0; border-radius:8px; padding:11px 16px; font-size:1em; text-decoration:none; cursor:pointer; } .muted { opacity:.7; }
+</style></head><body><main>
+<header><div><h1>Průběh aktualizace</h1><p class="muted">Živý výstup Ansible a vzdálených zařízení.</p></div><span id="job-status" class="queued">Čekám na spuštění…</span></header>
+<section class="card"><strong>Vybraná zařízení</strong><ul>__HOST_LIST__</ul><p id="job-message" class="muted">Připojuji se k úloze…</p></section>
+<pre id="terminal" aria-live="polite">Čekám na první výstup Ansible…</pre>
+<div class="toolbar"><p class="muted">Log se obnovuje automaticky každou sekundu.</p><a class="button" href="/?system=__SYSTEM_FILTER__">Zpět na přehled zařízení</a></div>
+</main><script>
+const jobId = __JOB_ID_JSON__;
+const statusEl = document.getElementById('job-status'); const messageEl = document.getElementById('job-message'); const terminalEl = document.getElementById('terminal');
+const labels = { queued:'Ve frontě', running:'Probíhá', completed:'Dokončeno', failed:'Selhalo' };
+async function pollInstallJob() {
+  try {
+    const response = await fetch('/install-status?job_id=' + encodeURIComponent(jobId), {cache:'no-store'});
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Stav úlohy není dostupný.');
+    const wasNearBottom = terminalEl.scrollTop + terminalEl.clientHeight >= terminalEl.scrollHeight - 40;
+    terminalEl.textContent = data.output || 'Čekám na první výstup Ansible…'; if (wasNearBottom) terminalEl.scrollTop = terminalEl.scrollHeight;
+    statusEl.textContent = labels[data.status] || data.status || 'Neznámý stav'; statusEl.className = data.status || ''; messageEl.textContent = data.message || '';
+    if (data.status === 'queued' || data.status === 'running') window.setTimeout(pollInstallJob, 1000);
+    else if (data.returncode === 0) messageEl.textContent += ' Zařízení se automaticky nerestartovala.';
+  } catch (error) { messageEl.textContent = 'Nepodařilo se načíst průběh; zkouším znovu. ' + error.message; window.setTimeout(pollInstallJob, 3000); }
+}
+pollInstallJob();
+</script></body></html>"""
+    return page.replace("__JOB_ID_JSON__", job_id_json).replace("__HOST_LIST__", host_list).replace("__SYSTEM_FILTER__", safe_filter)
+
+
 class Handler(BaseHTTPRequestHandler):
+    def send_json(self, payload, status=200):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_html(self, page, status=200):
         body = page.encode("utf-8")
         self.send_response(status)
@@ -463,6 +512,20 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(self.path)
+        if parsed.path == "/install-status":
+            job_id = parse_qs(parsed.query).get("job_id", [""])[0]
+            if not re.fullmatch(r"[0-9a-f]{32}", job_id):
+                self.send_json({"error": "Neplatné ID úlohy."}, status=400)
+                return
+            try:
+                data = api_request(f"/api/updates/install/jobs/{job_id}", timeout=15)
+                self.send_json(data)
+            except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+                logger.warning("Could not load update job %s: %s", job_id, type(exc).__name__)
+                status = exc.code if isinstance(exc, HTTPError) else 502
+                self.send_json({"error": "Stav aktualizace se nepodařilo načíst."}, status=status)
+            return
+
         if parsed.path not in ("/", "/index.html"):
             self.send_error(404)
             return
@@ -532,16 +595,16 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_html(page)
                     return
                 result = api_request(
-                    "/api/updates/install",
+                    "/api/updates/install/start",
                     method="POST",
-                    timeout=1800,
+                    timeout=15,
                     payload={"hosts": hosts},
                 )
-                data = api_request("/api/update-targets", timeout=15)
-                devices = data.get("devices", [])
-                devices.extend(supervisor_devices())
-                notice = "Aktualizace dokončena pro: " + ", ".join(result.get("hosts", hosts))
-                page = render_page(devices, notice=notice, system_filter=system_filter)
+                job_id = result.get("job_id")
+                if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
+                    raise ValueError("API nevrátilo platné ID úlohy aktualizace.")
+                self.send_html(render_install_page(job_id, hosts, system_filter))
+                return
             except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
                 logger.exception("Selected package update failed")
                 message = "Aktualizaci se nepodařilo dokončit. Ověř povolení zařízení a logy API."
