@@ -515,12 +515,22 @@ class Handler(BaseHTTPRequestHandler):
                 system_filter = "all"
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if length <= 0 or length > 20000:
+                if length < 0 or length > 20000:
                     raise ValueError("Invalid form size")
-                form = parse_qs(self.rfile.read(length).decode("utf-8"))
+                form_body = self.rfile.read(length).decode("utf-8") if length else ""
+                form = parse_qs(form_body)
                 hosts = form.get("hosts", [])
                 if not hosts:
-                    raise ValueError("Vyber alespoň jedno podporované zařízení.")
+                    data = api_request("/api/update-targets", timeout=15)
+                    devices = data.get("devices", [])
+                    devices.extend(supervisor_devices())
+                    page = render_page(
+                        devices,
+                        notice="Nebyla vybrána žádná zařízení. Vyber alespoň jedno podporované zařízení.",
+                        system_filter=system_filter,
+                    )
+                    self.send_html(page)
+                    return
                 result = api_request(
                     "/api/updates/install",
                     method="POST",
