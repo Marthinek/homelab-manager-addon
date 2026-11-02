@@ -229,6 +229,20 @@ body {{
   background: var(--primary-background-color, transparent);
 }}
 h1 {{ margin-bottom: 8px; }}
+.back-link {{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--primary-text-color, inherit);
+  background: var(--card-background-color, var(--panel));
+  text-decoration: none;
+  font-weight: 600;
+}}
+.back-link:hover {{ background: var(--panel); }}
  .summary {{
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -332,6 +346,7 @@ li {{ margin-bottom: 8px; }}
 </style>
 </head>
 <body>
+<a class="back-link" href="/" target="_top" title="Zpět do Home Assistant"><span aria-hidden="true">←</span> Zpět do Home Assistant</a>
 <header>
 <h1>Homelab Manager</h1>
 <p class="muted">Centrální přehled zařízení a dostupných aktualizací.</p>
