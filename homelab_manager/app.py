@@ -180,13 +180,15 @@ def render_page(devices, error=None, notice=None, system_filter="all"):
     for device in filtered_devices:
         device_id_raw = str(device.get("id", ""))
         count = int(device.get("update_count", 0))
+        is_openwrt = "openwrt" in device.get("groups", [])
         if device.get("can_update"):
             update_choices.append(
                 "<label class='update-choice'>"
                 f"<input type='checkbox' name='hosts' value='{html.escape(device_id_raw, quote=True)}' "
+                f"data-openwrt-firmware='{'true' if is_openwrt else 'false'}' "
                 f"{'checked' if count > 0 else ''}> "
                 f"<span><strong>{html.escape(device_id_raw)}</strong>"
-                f"<small>{count} dostupných aktualizací</small></span>"
+                f"<small>{'Firmware OpenWrt · aktualizace po jednom' if is_openwrt else f'{count} dostupných aktualizací'}</small></span>"
                 "</label>"
             )
         else:
@@ -411,13 +413,17 @@ li {{ margin-bottom: 8px; }}
 </dialog>
 <script>
 function confirmUpdateSelection() {{
-  const selected = document.querySelectorAll('#update-dialog input[name="hosts"]:checked');
+  const selected = Array.from(document.querySelectorAll('#update-dialog input[name="hosts"]:checked'));
   if (!selected.length) {{
     alert('Vyber alespoň jedno podporované zařízení.');
     return false;
   }}
-  const names = Array.from(selected).map(el => el.value);
-  return confirm('Opravdu nainstalovat dostupné aktualizace na ' + names.length + ' zařízení?\\n\\n' + names.join(', ') + '\\n\\nZařízení se automaticky nerestartují.');
+  const names = selected.map(el => el.value);
+  const hasOpenWrt = selected.some(el => el.dataset.openwrtFirmware === 'true');
+  const message = hasOpenWrt
+    ? 'OpenWrt firmware se aktualizuje po jednom. Routery, které mají dostupné aktualizace, se restartují a po každém upgradu se ověří SSH, model, ZeroTier a zbývající aktualizace. Při chybě se další routery nespustí.'
+    : 'Debian balíčky se aktualizují bez plánovaného restartu.';
+  return confirm('Opravdu pokračovat pro ' + names.length + ' zařízení?\\n\\n' + names.join(', ') + '\\n\\n' + message);
 }}
 function refreshSelectedSummary() {{
   const selected = document.querySelectorAll('#update-dialog input[name="hosts"]:checked').length;
@@ -466,7 +472,7 @@ main { max-width:1100px; margin:0 auto; } header,.toolbar { display:flex; align-
 #terminal { background:#101820; color:#d1d5db; border-radius:10px; padding:16px; min-height:300px; max-height:65vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
 button,.button { display:inline-block; background:var(--blue); color:white; border:0; border-radius:8px; padding:11px 16px; font-size:1em; text-decoration:none; cursor:pointer; } .muted { opacity:.7; }
 </style></head><body><main>
-<header><div><h1>Průběh aktualizace</h1><p class="muted">__TERMINAL_DESCRIPTION__</p></div><span id="job-status" class="queued">Čekám na spuštění…</span></header>
+<header><div><h1>Průběh aktualizace</h1><p class="muted" id="terminal-description">__TERMINAL_DESCRIPTION__</p></div><span id="job-status" class="queued">Čekám na spuštění…</span></header>
 <section class="card"><strong>Vybraná zařízení</strong><ul>__HOST_LIST__</ul><p id="job-message" class="muted">Připojuji se k úloze…</p></section>
 <pre id="terminal" aria-live="polite">Čekám na první výstup Ansible…</pre>
 <div class="toolbar"><p class="muted">Log se obnovuje automaticky každou sekundu.</p><a class="button" href="./?system=__SYSTEM_FILTER__">Zpět na přehled zařízení</a></div>
@@ -481,8 +487,11 @@ async function pollInstallJob() {
     const wasNearBottom = terminalEl.scrollTop + terminalEl.clientHeight >= terminalEl.scrollHeight - 40;
     terminalEl.textContent = data.output || 'Čekám na první výstup Ansible…'; if (wasNearBottom) terminalEl.scrollTop = terminalEl.scrollHeight;
     statusEl.textContent = labels[data.status] || data.status || 'Neznámý stav'; statusEl.className = data.status || ''; messageEl.textContent = data.message || '';
+    if (data.firmware_update) {
+      document.getElementById('terminal-description').textContent = 'OpenWrt firmware: routery se aktualizují postupně. Po každém restartu se ověří dostupnost a stav; při chybě se fronta zastaví.';
+    }
     if (data.status === 'queued' || data.status === 'running') window.setTimeout(pollInstallJob, 1000);
-    else if (data.returncode === 0 && !data.simulation) messageEl.textContent += ' Zařízení se automaticky nerestartovala.';
+    else if (data.returncode === 0 && !data.simulation && !data.firmware_update) messageEl.textContent += ' Zařízení se automaticky nerestartovala.';
   } catch (error) { messageEl.textContent = 'Nepodařilo se načíst průběh; zkouším znovu. ' + error.message; window.setTimeout(pollInstallJob, 3000); }
 }
 pollInstallJob();
