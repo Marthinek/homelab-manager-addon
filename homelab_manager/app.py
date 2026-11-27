@@ -468,14 +468,14 @@ button,.button { display:inline-block; background:var(--blue); color:white; bord
 <header><div><h1>Průběh aktualizace</h1><p class="muted">Živý výstup Ansible a vzdálených zařízení.</p></div><span id="job-status" class="queued">Čekám na spuštění…</span></header>
 <section class="card"><strong>Vybraná zařízení</strong><ul>__HOST_LIST__</ul><p id="job-message" class="muted">Připojuji se k úloze…</p></section>
 <pre id="terminal" aria-live="polite">Čekám na první výstup Ansible…</pre>
-<div class="toolbar"><p class="muted">Log se obnovuje automaticky každou sekundu.</p><a class="button" href="/?system=__SYSTEM_FILTER__">Zpět na přehled zařízení</a></div>
+<div class="toolbar"><p class="muted">Log se obnovuje automaticky každou sekundu.</p><a class="button" href="./?system=__SYSTEM_FILTER__">Zpět na přehled zařízení</a></div>
 </main><script>
 const jobId = __JOB_ID_JSON__;
 const statusEl = document.getElementById('job-status'); const messageEl = document.getElementById('job-message'); const terminalEl = document.getElementById('terminal');
 const labels = { queued:'Ve frontě', running:'Probíhá', completed:'Dokončeno', failed:'Selhalo' };
 async function pollInstallJob() {
   try {
-    const response = await fetch('/install-status?job_id=' + encodeURIComponent(jobId), {cache:'no-store'});
+    const response = await fetch('install-status?job_id=' + encodeURIComponent(jobId), {cache:'no-store'});
     const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Stav úlohy není dostupný.');
     const wasNearBottom = terminalEl.scrollTop + terminalEl.clientHeight >= terminalEl.scrollHeight - 40;
     terminalEl.textContent = data.output || 'Čekám na první výstup Ansible…'; if (wasNearBottom) terminalEl.scrollTop = terminalEl.scrollHeight;
