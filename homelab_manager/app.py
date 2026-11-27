@@ -377,7 +377,8 @@ li {{ margin-bottom: 8px; }}
   </div>
 </div>
 <div class="toolbar">
-  <div>
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <a class="back-link" href="terminal-test" title="Bezpečná simulace živého terminálu">Otestovat živý terminál</a>
     <label for="system">Zobrazit systém: </label>
     <form method="get" action="" style="display:inline-block; margin-left: 6px;">
   <select id="system" name="system" onchange="this.form.submit()">
@@ -534,11 +535,14 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(self.path)
-        if parsed.path == "/terminal-test":
+        request_path = parsed.path.rstrip("/") or "/"
+        # Home Assistant may keep its app/Ingress prefix in the forwarded URL.
+        # Match application routes by their final path component.
+        if request_path == "/terminal-test" or request_path.endswith("/terminal-test"):
             self.send_html(render_terminal_test_page())
             return
 
-        if parsed.path == "/install-status":
+        if request_path == "/install-status" or request_path.endswith("/install-status"):
             job_id = parse_qs(parsed.query).get("job_id", [""])[0]
             if not re.fullmatch(r"[0-9a-f]{32}", job_id):
                 self.send_json({"error": "Neplatné ID úlohy."}, status=400)
@@ -597,7 +601,8 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(self.path)
-        if parsed.path == "/terminal-test":
+        request_path = parsed.path.rstrip("/") or "/"
+        if request_path == "/terminal-test" or request_path.endswith("/terminal-test"):
             try:
                 result = api_request(
                     "/api/updates/install/simulate",
@@ -622,7 +627,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(render_terminal_test_page(message))
             return
 
-        if parsed.path == "/install":
+        if request_path == "/install" or request_path.endswith("/install"):
             system_filter = parse_qs(parsed.query).get("system", ["all"])[0]
             allowed_filters = {"all", "debian", "proxmox", "openwrt", "homeassistant"}
             if system_filter not in allowed_filters:
