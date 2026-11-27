@@ -421,7 +421,7 @@ function confirmUpdateSelection() {{
   const names = selected.map(el => el.value);
   const hasOpenWrt = selected.some(el => el.dataset.openwrtFirmware === 'true');
   const message = hasOpenWrt
-    ? 'OpenWrt firmware se aktualizuje po jednom. Každý router se restartuje a po restartu se ověří SSH, model, ZeroTier a zbývající aktualizace. Při chybě se další routery nespustí.'
+    ? 'OpenWrt firmware se aktualizuje po jednom. Routery, které mají dostupné aktualizace, se restartují a po každém upgradu se ověří SSH, model, ZeroTier a zbývající aktualizace. Při chybě se další routery nespustí.'
     : 'Debian balíčky se aktualizují bez plánovaného restartu.';
   return confirm('Opravdu pokračovat pro ' + names.length + ' zařízení?\\n\\n' + names.join(', ') + '\\n\\n' + message);
 }}
