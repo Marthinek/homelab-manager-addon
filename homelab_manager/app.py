@@ -489,6 +489,28 @@ pollInstallJob();
     return page.replace("__JOB_ID_JSON__", job_id_json).replace("__HOST_LIST__", host_list).replace("__SYSTEM_FILTER__", safe_filter)
 
 
+def render_terminal_test_page(error=None):
+    error_html = f"<p class='error'>{html.escape(error)}</p>" if error else ""
+    return f"""<!doctype html>
+<html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Test živého terminálu · Homelab Manager</title>
+<style>
+:root {{ color-scheme:light dark; --border:#8885; --panel:#8881; --blue:#287ac2; --red:#d64545; }}
+body {{ font-family:Arial,sans-serif; margin:20px; color:var(--primary-text-color,inherit); background:var(--primary-background-color,transparent); }}
+main {{ max-width:760px; margin:0 auto; }} section {{ border:1px solid var(--border); border-radius:12px; padding:20px; background:var(--card-background-color,var(--panel)); }}
+button,.button {{ display:inline-block; background:var(--blue); color:white; border:0; border-radius:8px; padding:11px 16px; font-size:1em; text-decoration:none; cursor:pointer; }}
+.error {{ color:var(--red); }} .muted {{ opacity:.7; }}
+</style></head><body><main><section>
+<h1>Test živého terminálu</h1>
+<p>Tato kontrola vytvoří pouze simulovanou úlohu. Nespustí Ansible, nepřipojí se k žádnému zařízení a nezmění žádné balíčky.</p>
+{error_html}
+<form method="post" action="">
+<button type="submit">Spustit bezpečnou simulaci</button>
+<a class="button" href="./">Zpět na přehled</a>
+</form>
+<p class="muted">Simulace trvá přibližně 10 sekund.</p>
+</section></main></body></html>"""
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, payload, status=200):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -512,6 +534,10 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(self.path)
+        if parsed.path == "/terminal-test":
+            self.send_html(render_terminal_test_page())
+            return
+
         if parsed.path == "/install-status":
             job_id = parse_qs(parsed.query).get("job_id", [""])[0]
             if not re.fullmatch(r"[0-9a-f]{32}", job_id):
@@ -571,6 +597,31 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(self.path)
+        if parsed.path == "/terminal-test":
+            try:
+                result = api_request(
+                    "/api/updates/install/simulate",
+                    method="POST",
+                    timeout=15,
+                )
+                job_id = result.get("job_id")
+                if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
+                    raise ValueError("API nevrátilo platné ID simulované úlohy.")
+                hosts = result.get("hosts", ["SIMULACE – bez připojení k zařízení"])
+                self.send_html(render_install_page(job_id, hosts, "all"))
+            except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+                logger.exception("Could not start terminal simulation")
+                message = "Simulaci se nepodařilo spustit. Ověř API a logy doplňku."
+                if isinstance(exc, HTTPError):
+                    try:
+                        detail = json.loads(exc.read().decode("utf-8")).get("detail")
+                        if detail:
+                            message = str(detail)
+                    except (ValueError, OSError):
+                        pass
+                self.send_html(render_terminal_test_page(message))
+            return
+
         if parsed.path == "/install":
             system_filter = parse_qs(parsed.query).get("system", ["all"])[0]
             allowed_filters = {"all", "debian", "proxmox", "openwrt", "homeassistant"}
