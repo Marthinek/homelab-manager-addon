@@ -450,7 +450,7 @@ refreshSelectedSummary();
     return page
 
 
-def render_install_page(job_id, hosts, system_filter="all"):
+def render_install_page(job_id, hosts, system_filter="all", simulation=False):
     job_id_json = json.dumps(job_id)
     host_list = "".join(f"<li><code>{html.escape(str(host))}</code></li>" for host in hosts)
     safe_filter = html.escape(system_filter, quote=True)
@@ -465,7 +465,7 @@ main { max-width:1100px; margin:0 auto; } header,.toolbar { display:flex; align-
 #terminal { background:#101820; color:#d1d5db; border-radius:10px; padding:16px; min-height:300px; max-height:65vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
 button,.button { display:inline-block; background:var(--blue); color:white; border:0; border-radius:8px; padding:11px 16px; font-size:1em; text-decoration:none; cursor:pointer; } .muted { opacity:.7; }
 </style></head><body><main>
-<header><div><h1>Průběh aktualizace</h1><p class="muted">Živý výstup Ansible a vzdálených zařízení.</p></div><span id="job-status" class="queued">Čekám na spuštění…</span></header>
+<header><div><h1>Průběh aktualizace</h1><p class="muted">__TERMINAL_DESCRIPTION__</p></div><span id="job-status" class="queued">Čekám na spuštění…</span></header>
 <section class="card"><strong>Vybraná zařízení</strong><ul>__HOST_LIST__</ul><p id="job-message" class="muted">Připojuji se k úloze…</p></section>
 <pre id="terminal" aria-live="polite">Čekám na první výstup Ansible…</pre>
 <div class="toolbar"><p class="muted">Log se obnovuje automaticky každou sekundu.</p><a class="button" href="./?system=__SYSTEM_FILTER__">Zpět na přehled zařízení</a></div>
@@ -481,12 +481,34 @@ async function pollInstallJob() {
     terminalEl.textContent = data.output || 'Čekám na první výstup Ansible…'; if (wasNearBottom) terminalEl.scrollTop = terminalEl.scrollHeight;
     statusEl.textContent = labels[data.status] || data.status || 'Neznámý stav'; statusEl.className = data.status || ''; messageEl.textContent = data.message || '';
     if (data.status === 'queued' || data.status === 'running') window.setTimeout(pollInstallJob, 1000);
-    else if (data.returncode === 0) messageEl.textContent += ' Zařízení se automaticky nerestartovala.';
+    else if (data.returncode === 0 && !data.simulation) messageEl.textContent += ' Zařízení se automaticky nerestartovala.';
   } catch (error) { messageEl.textContent = 'Nepodařilo se načíst průběh; zkouším znovu. ' + error.message; window.setTimeout(pollInstallJob, 3000); }
 }
 pollInstallJob();
 </script></body></html>"""
-    return page.replace("__JOB_ID_JSON__", job_id_json).replace("__HOST_LIST__", host_list).replace("__SYSTEM_FILTER__", safe_filter)
+    return page.replace("__JOB_ID_JSON__", job_id_json).replace("__HOST_LIST__", host_list).replace("__SYSTEM_FILTER__", safe_filter).replace("__TERMINAL_DESCRIPTION__", "Simulovaný výstup – bez Ansible a bez připojení ke vzdáleným zařízením." if simulation else "Živý výstup Ansible a vzdálených zařízení.")
+
+
+def render_terminal_test_page(error=None):
+    error_html = f"<p class='error'>{html.escape(error)}</p>" if error else ""
+    return f"""<!doctype html>
+<html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Test živého terminálu · Homelab Manager</title>
+<style>
+:root {{ color-scheme:light dark; --border:#8885; --panel:#8881; --blue:#287ac2; --red:#d64545; }}
+body {{ font-family:Arial,sans-serif; margin:20px; color:var(--primary-text-color,inherit); background:var(--primary-background-color,transparent); }}
+main {{ max-width:760px; margin:0 auto; }} section {{ border:1px solid var(--border); border-radius:12px; padding:20px; background:var(--card-background-color,var(--panel)); }}
+button,.button {{ display:inline-block; background:var(--blue); color:white; border:0; border-radius:8px; padding:11px 16px; font-size:1em; text-decoration:none; cursor:pointer; }}
+.error {{ color:var(--red); }} .muted {{ opacity:.7; }}
+</style></head><body><main><section>
+<h1>Test živého terminálu</h1>
+<p>Tato kontrola vytvoří pouze simulovanou úlohu. Nespustí Ansible, nepřipojí se k žádnému zařízení a nezmění žádné balíčky.</p>
+{error_html}
+<form method="post" action="">
+<button type="submit">Spustit bezpečnou simulaci</button>
+<a class="button" href="./">Zpět na přehled</a>
+</form>
+<p class="muted">Simulace trvá přibližně 10 sekund.</p>
+</section></main></body></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -512,6 +534,10 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(self.path)
+        if parsed.path == "/terminal-test":
+            self.send_html(render_terminal_test_page())
+            return
+
         if parsed.path == "/install-status":
             job_id = parse_qs(parsed.query).get("job_id", [""])[0]
             if not re.fullmatch(r"[0-9a-f]{32}", job_id):
@@ -571,6 +597,31 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(self.path)
+        if parsed.path == "/terminal-test":
+            try:
+                result = api_request(
+                    "/api/updates/install/simulate",
+                    method="POST",
+                    timeout=15,
+                )
+                job_id = result.get("job_id")
+                if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
+                    raise ValueError("API nevrátilo platné ID simulované úlohy.")
+                hosts = result.get("hosts", ["SIMULACE – bez připojení k zařízení"])
+                self.send_html(render_install_page(job_id, hosts, "all", simulation=True))
+            except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+                logger.exception("Could not start terminal simulation")
+                message = "Simulaci se nepodařilo spustit. Ověř API a logy doplňku."
+                if isinstance(exc, HTTPError):
+                    try:
+                        detail = json.loads(exc.read().decode("utf-8")).get("detail")
+                        if detail:
+                            message = str(detail)
+                    except (ValueError, OSError):
+                        pass
+                self.send_html(render_terminal_test_page(message))
+            return
+
         if parsed.path == "/install":
             system_filter = parse_qs(parsed.query).get("system", ["all"])[0]
             allowed_filters = {"all", "debian", "proxmox", "openwrt", "homeassistant"}
