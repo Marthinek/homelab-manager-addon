@@ -450,7 +450,7 @@ refreshSelectedSummary();
     return page
 
 
-def render_install_page(job_id, hosts, system_filter="all"):
+def render_install_page(job_id, hosts, system_filter="all", simulation=False):
     job_id_json = json.dumps(job_id)
     host_list = "".join(f"<li><code>{html.escape(str(host))}</code></li>" for host in hosts)
     safe_filter = html.escape(system_filter, quote=True)
@@ -465,7 +465,7 @@ main { max-width:1100px; margin:0 auto; } header,.toolbar { display:flex; align-
 #terminal { background:#101820; color:#d1d5db; border-radius:10px; padding:16px; min-height:300px; max-height:65vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
 button,.button { display:inline-block; background:var(--blue); color:white; border:0; border-radius:8px; padding:11px 16px; font-size:1em; text-decoration:none; cursor:pointer; } .muted { opacity:.7; }
 </style></head><body><main>
-<header><div><h1>Průběh aktualizace</h1><p class="muted">Živý výstup Ansible a vzdálených zařízení.</p></div><span id="job-status" class="queued">Čekám na spuštění…</span></header>
+<header><div><h1>Průběh aktualizace</h1><p class="muted">__TERMINAL_DESCRIPTION__</p></div><span id="job-status" class="queued">Čekám na spuštění…</span></header>
 <section class="card"><strong>Vybraná zařízení</strong><ul>__HOST_LIST__</ul><p id="job-message" class="muted">Připojuji se k úloze…</p></section>
 <pre id="terminal" aria-live="polite">Čekám na první výstup Ansible…</pre>
 <div class="toolbar"><p class="muted">Log se obnovuje automaticky každou sekundu.</p><a class="button" href="./?system=__SYSTEM_FILTER__">Zpět na přehled zařízení</a></div>
@@ -481,12 +481,12 @@ async function pollInstallJob() {
     terminalEl.textContent = data.output || 'Čekám na první výstup Ansible…'; if (wasNearBottom) terminalEl.scrollTop = terminalEl.scrollHeight;
     statusEl.textContent = labels[data.status] || data.status || 'Neznámý stav'; statusEl.className = data.status || ''; messageEl.textContent = data.message || '';
     if (data.status === 'queued' || data.status === 'running') window.setTimeout(pollInstallJob, 1000);
-    else if (data.returncode === 0) messageEl.textContent += ' Zařízení se automaticky nerestartovala.';
+    else if (data.returncode === 0 && !data.simulation) messageEl.textContent += ' Zařízení se automaticky nerestartovala.';
   } catch (error) { messageEl.textContent = 'Nepodařilo se načíst průběh; zkouším znovu. ' + error.message; window.setTimeout(pollInstallJob, 3000); }
 }
 pollInstallJob();
 </script></body></html>"""
-    return page.replace("__JOB_ID_JSON__", job_id_json).replace("__HOST_LIST__", host_list).replace("__SYSTEM_FILTER__", safe_filter)
+    return page.replace("__JOB_ID_JSON__", job_id_json).replace("__HOST_LIST__", host_list).replace("__SYSTEM_FILTER__", safe_filter).replace("__TERMINAL_DESCRIPTION__", "Simulovaný výstup – bez Ansible a bez připojení ke vzdáleným zařízením." if simulation else "Živý výstup Ansible a vzdálených zařízení.")
 
 
 def render_terminal_test_page(error=None):
@@ -608,7 +608,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
                     raise ValueError("API nevrátilo platné ID simulované úlohy.")
                 hosts = result.get("hosts", ["SIMULACE – bez připojení k zařízení"])
-                self.send_html(render_install_page(job_id, hosts, "all"))
+                self.send_html(render_install_page(job_id, hosts, "all", simulation=True))
             except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
                 logger.exception("Could not start terminal simulation")
                 message = "Simulaci se nepodařilo spustit. Ověř API a logy doplňku."
